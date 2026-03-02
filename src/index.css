@@ -1,0 +1,275 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;800;900&family=Rajdhani:wght@300;400;500;600;700&display=swap');
+
+@layer base {
+  /* ===== LIGHT THEME (raised contrast for readability/accessibility) ===== */
+  :root {
+    --background: 220 18% 97%;
+    --foreground: 220 30% 10%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 220 30% 10%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 30% 10%;
+
+    --primary: 142 60% 35%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 185 80% 30%;
+    --secondary-foreground: 0 0% 100%;
+
+    --muted: 220 18% 92%;
+    --muted-foreground: 220 20% 28%;
+
+    --accent: 270 60% 50%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 72% 50%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 220 16% 72%;
+    --input: 220 16% 78%;
+    --ring: 142 60% 35%;
+
+    --radius: 0.75rem;
+
+    /* Custom tokens – light */
+    --neon-green: 142 60% 35%;
+    --neon-cyan: 185 80% 30%;
+    --neon-purple: 270 60% 50%;
+    --neon-orange: 25 80% 50%;
+    --dark-base: 220 18% 97%;
+    --dark-surface: 0 0% 100%;
+    --dark-elevated: 220 18% 95%;
+
+    --glow-green: none;
+    --glow-cyan: none;
+    --glow-purple: none;
+
+    --gradient-hero: linear-gradient(135deg, hsl(220 18% 97%) 0%, hsl(0 0% 100%) 100%);
+    --gradient-card: linear-gradient(145deg, hsl(0 0% 100%) 0%, hsl(220 18% 96%) 100%);
+    --gradient-neon: linear-gradient(90deg, hsl(142 60% 35%) 0%, hsl(185 80% 30%) 100%);
+  }
+
+  /* ===== DARK THEME (raised contrast for readability/accessibility) ===== */
+  .dark {
+    --background: 220 20% 10%;
+    --foreground: 180 100% 95%;
+
+    --card: 220 25% 14%;
+    --card-foreground: 180 100% 95%;
+
+    --popover: 220 25% 14%;
+    --popover-foreground: 180 100% 95%;
+
+    --primary: 142 76% 50%;
+    --primary-foreground: 220 20% 8%;
+
+    --secondary: 185 100% 50%;
+    --secondary-foreground: 220 20% 8%;
+
+    --muted: 220 20% 22%;
+    --muted-foreground: 220 15% 78%;
+
+    --accent: 280 100% 65%;
+    --accent-foreground: 180 100% 95%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 180 100% 95%;
+
+    --border: 220 18% 32%;
+    --input: 220 18% 24%;
+    --ring: 142 76% 50%;
+
+    --neon-green: 142 76% 50%;
+    --neon-cyan: 185 100% 50%;
+    --neon-purple: 280 100% 65%;
+    --neon-orange: 25 100% 55%;
+    --dark-base: 220 20% 10%;
+    --dark-surface: 220 25% 14%;
+    --dark-elevated: 220 20% 20%;
+
+    --glow-green: 0 0 20px hsl(142 76% 50% / 0.5), 0 0 40px hsl(142 76% 50% / 0.3);
+    --glow-cyan: 0 0 20px hsl(185 100% 50% / 0.5), 0 0 40px hsl(185 100% 50% / 0.3);
+    --glow-purple: 0 0 20px hsl(280 100% 65% / 0.5), 0 0 40px hsl(280 100% 65% / 0.3);
+
+    --gradient-hero: linear-gradient(135deg, hsl(220 25% 16%) 0%, hsl(220 20% 10%) 100%);
+    --gradient-card: linear-gradient(145deg, hsl(220 25% 18%) 0%, hsl(220 25% 14%) 100%);
+    --gradient-neon: linear-gradient(90deg, hsl(142 76% 50%) 0%, hsl(185 100% 50%) 100%);
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground font-body antialiased;
+    line-height: 1.6;
+    min-height: 100vh;
+  }
+
+  .dark body,
+  .dark {
+    background: radial-gradient(ellipse at top, hsl(220 25% 16%) 0%, hsl(220 20% 10%) 100%);
+  }
+
+  :root:not(.dark) body {
+    background: hsl(220 18% 97%);
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-display font-bold tracking-wide;
+  }
+
+  html.a11y-grayscale {
+    filter: grayscale(1);
+  }
+
+  html.a11y-underline-interactive a,
+  html.a11y-underline-interactive button,
+  html.a11y-underline-interactive [role="button"],
+  html.a11y-underline-interactive [role="link"],
+  html.a11y-underline-interactive [data-radix-collection-item] {
+    text-decoration: underline;
+    text-decoration-thickness: 2px;
+    text-underline-offset: 3px;
+  }
+
+  html.a11y-keyboard-nav :focus-visible {
+    outline: 3px solid hsl(var(--ring));
+    outline-offset: 3px;
+    box-shadow: 0 0 0 2px hsl(var(--background));
+  }
+
+  html.a11y-ctrl-highlight a,
+  html.a11y-ctrl-highlight button,
+  html.a11y-ctrl-highlight input,
+  html.a11y-ctrl-highlight select,
+  html.a11y-ctrl-highlight textarea,
+  html.a11y-ctrl-highlight [role="button"],
+  html.a11y-ctrl-highlight [role="link"],
+  html.a11y-ctrl-highlight [tabindex]:not([tabindex="-1"]) {
+    outline: 2px dashed hsl(var(--ring));
+    outline-offset: 2px;
+  }
+}
+
+@layer components {
+  .neon-text {
+    text-shadow: 0 0 10px hsl(var(--primary) / 0.8), 
+                 0 0 20px hsl(var(--primary) / 0.5), 
+                 0 0 40px hsl(var(--primary) / 0.3);
+  }
+
+  .neon-text-cyan {
+    text-shadow: 0 0 10px hsl(var(--secondary) / 0.8), 
+                 0 0 20px hsl(var(--secondary) / 0.5), 
+                 0 0 40px hsl(var(--secondary) / 0.3);
+  }
+
+  .neon-border {
+    box-shadow: 0 0 10px hsl(var(--primary) / 0.5), 
+                inset 0 0 10px hsl(var(--primary) / 0.1);
+    border-color: hsl(var(--primary));
+  }
+
+  .neon-border-cyan {
+    box-shadow: 0 0 10px hsl(var(--secondary) / 0.5), 
+                inset 0 0 10px hsl(var(--secondary) / 0.1);
+    border-color: hsl(var(--secondary));
+  }
+
+  .glass-card {
+    background: linear-gradient(145deg, hsl(220 25% 18% / 0.85) 0%, hsl(220 25% 14% / 0.92) 100%);
+    backdrop-filter: blur(10px);
+    border: 1px solid hsl(var(--border) / 0.5);
+  }
+
+  :not(.dark) .glass-card {
+    background: linear-gradient(145deg, hsl(0 0% 100% / 0.9) 0%, hsl(220 15% 96% / 0.95) 100%);
+  }
+
+  .stage-card {
+    @apply glass-card rounded-xl p-6 relative overflow-hidden transition-all duration-300;
+  }
+
+  .stage-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: var(--gradient-neon);
+    opacity: 0;
+    transition: opacity 0.3s ease;
+  }
+
+  .stage-card:hover::before {
+    opacity: 1;
+  }
+
+  .stage-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 10px 40px hsl(var(--primary) / 0.15);
+  }
+
+  .badge-pill {
+    @apply px-4 py-1.5 rounded-full text-sm font-medium border transition-all duration-300;
+    background: hsl(var(--muted) / 0.5);
+    border-color: hsl(var(--border));
+  }
+
+  .badge-pill:hover {
+    border-color: hsl(var(--primary));
+    box-shadow: 0 0 15px hsl(var(--primary) / 0.3);
+  }
+
+  .pulse-glow {
+    animation: pulse-glow 2s ease-in-out infinite;
+  }
+
+  @keyframes pulse-glow {
+    0%, 100% {
+      box-shadow: 0 0 5px hsl(var(--primary) / 0.5), 0 0 20px hsl(var(--primary) / 0.3);
+    }
+    50% {
+      box-shadow: 0 0 20px hsl(var(--primary) / 0.8), 0 0 40px hsl(var(--primary) / 0.5);
+    }
+  }
+
+  .float {
+    animation: float 3s ease-in-out infinite;
+  }
+
+  @keyframes float {
+    0%, 100% {
+      transform: translateY(0px);
+    }
+    50% {
+      transform: translateY(-10px);
+    }
+  }
+
+  .grid-bg {
+    background-image: 
+      linear-gradient(hsl(var(--border) / 0.3) 1px, transparent 1px),
+      linear-gradient(90deg, hsl(var(--border) / 0.3) 1px, transparent 1px);
+    background-size: 50px 50px;
+  }
+}
+
+@layer utilities {
+  .text-gradient {
+    background: var(--gradient-neon);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+}

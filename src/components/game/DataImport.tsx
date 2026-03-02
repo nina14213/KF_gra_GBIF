@@ -1,0 +1,354 @@
+import React, { useState, useCallback } from 'react';
+import { motion } from 'framer-motion';
+import { Button } from "@/components/ui/button";
+import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
+import { 
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "@/components/ui/select";
+import { 
+    Upload, 
+    FileSpreadsheet, 
+    ArrowLeft, 
+    Check,
+    AlertCircle,
+    Table,
+    FileText
+} from 'lucide-react';
+import * as XLSX from 'xlsx';
+import { useLanguage } from '@/i18n/LanguageContext';
+
+interface DataImportProps {
+    onBack: () => void;
+    onImportComplete?: (data: any[], columns: string[], fileName: string) => void;
+}
+
+export default function DataImport({ onBack, onImportComplete }: DataImportProps) {
+    const { t } = useLanguage();
+    const [file, setFile] = useState<File | null>(null);
+    const [fileType, setFileType] = useState<'csv' | 'txt' | 'xlsx' | null>(null);
+    const [delimiter, setDelimiter] = useState(',');
+    const [decimalSign, setDecimalSign] = useState('.');
+    const [preview, setPreview] = useState<{ columns: string[]; rows: any[] } | null>(null);
+    const [error, setError] = useState<string | null>(null);
+    const [isLoading, setIsLoading] = useState(false);
+
+    const getActualDelimiter = (delim: string): string => {
+        if (delim === '\\t') return '\t';
+        return delim;
+    };
+
+    const parseTextFile = useCallback((text: string, delim: string): { columns: string[]; rows: any[] } => {
+        const actualDelim = getActualDelimiter(delim);
+        const lines = text.split(/\r?\n/).filter(line => line.trim());
+        if (lines.length === 0) throw new Error(t('import.error.empty'));
+        
+        const headers = lines[0].split(actualDelim).map(h => h.trim().replace(/^"|"$/g, ''));
+        if (headers.length < 2) throw new Error(t('import.error.fewColumns'));
+        
+        const rows = lines.slice(1).map(line => {
+            const values = line.split(actualDelim).map(v => v.trim().replace(/^"|"$/g, ''));
+            const row: Record<string, string> = {};
+            headers.forEach((header, idx) => {
+                let value = values[idx] || '';
+                if (decimalSign === ',' && !isNaN(Number(value.replace(',', '.')))) {
+                    value = value.replace(',', '.');
+                }
+                row[header] = value;
+            });
+            return row;
+        });
+        
+        return { columns: headers, rows };
+    }, [decimalSign, t]);
+
+    const handleFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const selectedFile = e.target.files?.[0];
+        if (!selectedFile) return;
+
+        setFile(selectedFile);
+        setError(null);
+
+        const ext = selectedFile.name.split('.').pop()?.toLowerCase();
+        if (ext === 'xlsx' || ext === 'xls') {
+            setFileType('xlsx');
+            try {
+                const buffer = await selectedFile.arrayBuffer();
+                const workbook = XLSX.read(buffer, { type: 'array' });
+                const sheetName = workbook.SheetNames[0];
+                const worksheet = workbook.Sheets[sheetName];
+                const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[][];
+
+                if (jsonData.length === 0) throw new Error(t('import.error.empty'));
+
+                const headers = jsonData[0].map(String);
+                const rows = jsonData.slice(1).map(row => {
+                    const obj: Record<string, string> = {};
+                    headers.forEach((h, i) => { obj[h] = row[i] != null ? String(row[i]) : ''; });
+                    return obj;
+                });
+
+                setPreview({ columns: headers, rows: rows.slice(0, 5) });
+            } catch (err: any) {
+                setError(err.message || t('import.error.parse'));
+            }
+        } else if (ext === 'csv' || ext === 'txt') {
+            setFileType(ext as 'csv' | 'txt');
+            try {
+                const text = await selectedFile.text();
+                const parsed = parseTextFile(text, delimiter);
+                setPreview({ columns: parsed.columns, rows: parsed.rows.slice(0, 5) });
+            } catch (err: any) {
+                setError(err.message || t('import.error.parse'));
+            }
+        } else {
+            setError(t('import.error.format'));
+        }
+    }, [delimiter, parseTextFile, t]);
+
+    const handleDelimiterChange = useCallback(async (newDelimiter: string) => {
+        setDelimiter(newDelimiter);
+        if (file && (fileType === 'csv' || fileType === 'txt')) {
+            try {
+                const text = await file.text();
+                const parsed = parseTextFile(text, newDelimiter);
+                setPreview({ columns: parsed.columns, rows: parsed.rows.slice(0, 5) });
+                setError(null);
+            } catch (err: any) {
+                setError(err.message);
+            }
+        }
+    }, [file, fileType, parseTextFile]);
+
+    const handleImport = useCallback(async () => {
+        if (!file || !preview) return;
+        setIsLoading(true);
+
+        try {
+            let allData: any[];
+
+            if (fileType === 'xlsx') {
+                const buffer = await file.arrayBuffer();
+                const workbook = XLSX.read(buffer, { type: 'array' });
+                const sheetName = workbook.SheetNames[0];
+                const worksheet = workbook.Sheets[sheetName];
+                const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[][];
+                const headers = jsonData[0].map(String);
+                allData = jsonData.slice(1).map(row => {
+                    const obj: Record<string, string> = {};
+                    headers.forEach((h, i) => { obj[h] = row[i] != null ? String(row[i]) : ''; });
+                    return obj;
+                });
+            } else {
+                const text = await file.text();
+                const parsed = parseTextFile(text, delimiter);
+                allData = parsed.rows;
+            }
+
+            onImportComplete?.(allData, preview.columns, file.name);
+        } catch (err: any) {
+            setError(err.message || t('import.error.import'));
+        } finally {
+            setIsLoading(false);
+        }
+    }, [file, fileType, preview, delimiter, parseTextFile, onImportComplete, t]);
+
+    return (
+        <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-purple-50 to-pink-50 dark:from-slate-900 dark:via-indigo-950 dark:to-purple-950 p-4 md:p-8">
+            <div className="max-w-4xl mx-auto">
+                {/* Header */}
+                <motion.div
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    className="mb-8"
+                >
+                    <Button
+                        onClick={onBack}
+                        variant="ghost"
+                        className="text-muted-foreground hover:text-foreground"
+                    >
+                        <ArrowLeft className="w-4 h-4 mr-2" />
+                        {t('import.backToMenu')}
+                    </Button>
+                </motion.div>
+
+                <motion.div
+                    initial={{ opacity: 0, y: -20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="text-center mb-8"
+                >
+                     <h1 className="text-3xl md:text-4xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-emerald-600 to-cyan-600 dark:from-emerald-400 dark:to-cyan-400 mb-2">
+                         {t('import.title')}
+                     </h1>
+                     <p className="text-muted-foreground">
+                         {t('import.subtitle')}
+                     </p>
+                </motion.div>
+
+                <div className="grid md:grid-cols-2 gap-6">
+                    {/* Import Options */}
+                    <motion.div
+                        initial={{ opacity: 0, x: -20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ delay: 0.1 }}
+                    >
+                        <Card className="bg-card/90 border-border backdrop-blur">
+                            <CardHeader>
+                                <CardTitle className="text-card-foreground flex items-center gap-2">
+                                     <Upload className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
+                                     {t('import.fileImport')}
+                                </CardTitle>
+                            </CardHeader>
+                            <CardContent className="space-y-6">
+                                {/* File Input */}
+                                <div className="space-y-2">
+                                    <Label className="text-muted-foreground">{t('import.selectFile')}</Label>
+                                    <div className="relative">
+                                        <Input
+                                            type="file"
+                                            accept=".csv,.txt,.xlsx,.xls"
+                                            onChange={handleFileChange}
+                                            className="bg-muted/50 border-border text-foreground file:bg-emerald-600 file:text-white file:border-0 file:mr-4 file:px-4 file:py-2 file:rounded-lg hover:file:bg-emerald-700"
+                                        />
+                                    </div>
+                                    {file && (
+                                        <p className="text-sm text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                                            {fileType === 'xlsx' ? <FileSpreadsheet className="w-4 h-4" /> : <FileText className="w-4 h-4" />}
+                                            {file.name}
+                                        </p>
+                                    )}
+                                </div>
+
+                                {/* CSV/TXT Options */}
+                                <div className={`p-4 rounded-lg bg-muted/50 border border-border space-y-4 ${fileType === 'xlsx' ? 'opacity-50' : ''}`}>
+                                    <h4 className="text-sm font-medium text-muted-foreground">{t('import.csvOptions')} {fileType === 'xlsx' && t('import.csvNotAvailable')}</h4>
+                                    
+                                    <div className="space-y-2">
+                                        <Label className="text-muted-foreground text-sm">{t('import.columnSeparator')}</Label>
+                                        <Select value={delimiter} onValueChange={handleDelimiterChange}>
+                                            <SelectTrigger className="bg-muted/50 border-border text-foreground">
+                                                <SelectValue />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem value=",">{t('import.sep.comma')}</SelectItem>
+                                                <SelectItem value=";">{t('import.sep.semicolon')}</SelectItem>
+                                                <SelectItem value="\t">{t('import.sep.tab')}</SelectItem>
+                                                <SelectItem value="|">{t('import.sep.pipe')}</SelectItem>
+                                                <SelectItem value=" ">{t('import.sep.space')}</SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                    </div>
+
+                                    <div className="space-y-2">
+                                        <Label className="text-muted-foreground text-sm">{t('import.decimalSign')}</Label>
+                                        <Select value={decimalSign} onValueChange={setDecimalSign}>
+                                            <SelectTrigger className="bg-muted/50 border-border text-foreground">
+                                                <SelectValue />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem value=".">{t('import.dec.dot')}</SelectItem>
+                                                <SelectItem value=",">{t('import.dec.comma')}</SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                    </div>
+                                </div>
+
+                                {error && (
+                                    <div className="p-3 rounded-lg bg-red-500/20 border border-red-500/50 flex items-center gap-2 text-red-700 dark:text-red-300">
+                                        <AlertCircle className="w-4 h-4" />
+                                        <span className="text-sm">{error}</span>
+                                    </div>
+                                )}
+
+                                <Button
+                                    onClick={handleImport}
+                                    disabled={!preview || isLoading}
+                                    className="w-full bg-gradient-to-r from-emerald-600 to-cyan-600 hover:from-emerald-700 hover:to-cyan-700 text-white"
+                                >
+                                    {isLoading ? (
+                                        <span className="flex items-center gap-2">
+                                            <motion.div
+                                                animate={{ rotate: 360 }}
+                                                transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                                                className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full"
+                                            />
+                                            {t('import.processing')}
+                                        </span>
+                                    ) : (
+                                        <span className="flex items-center gap-2">
+                                            <Check className="w-4 h-4" />
+                                            {t('import.importContinue')}
+                                        </span>
+                                    )}
+                                </Button>
+                            </CardContent>
+                        </Card>
+                    </motion.div>
+
+                    {/* Preview */}
+                    <motion.div
+                        initial={{ opacity: 0, x: 20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ delay: 0.2 }}
+                    >
+                        <Card className="bg-card/90 border-border backdrop-blur h-full">
+                            <CardHeader>
+                                <CardTitle className="text-card-foreground flex items-center gap-2">
+                                     <Table className="w-5 h-5 text-cyan-600 dark:text-cyan-400" />
+                                     {t('import.dataPreview')}
+                                </CardTitle>
+                            </CardHeader>
+                            <CardContent>
+                                {preview ? (
+                                    <div className="overflow-x-auto">
+                                        <table className="w-full text-sm">
+                                            <thead>
+                                                <tr className="border-b border-border">
+                                                    {preview.columns.map((col, idx) => (
+                                                        <th 
+                                                            key={idx} 
+                                                            className="px-3 py-2 text-left text-emerald-600 dark:text-emerald-400 font-medium whitespace-nowrap"
+                                                        >
+                                                            {col}
+                                                        </th>
+                                                    ))}
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {preview.rows.map((row, rowIdx) => (
+                                                    <tr key={rowIdx} className="border-b border-border/50">
+                                                        {preview.columns.map((col, colIdx) => (
+                                                            <td 
+                                                                key={colIdx} 
+                                                                className="px-3 py-2 text-foreground whitespace-nowrap max-w-[150px] truncate"
+                                                            >
+                                                                {row[col] || '-'}
+                                                            </td>
+                                                        ))}
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                        <p className="text-xs text-muted-foreground mt-3">
+                                            {t('resources.previewRows', { count: preview.columns.length })}
+                                        </p>
+                                    </div>
+                                ) : (
+                                    <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+                                        <FileSpreadsheet className="w-12 h-12 mb-4 opacity-50" />
+                                        <p>{t('resources.selectFilePreview')}</p>
+                                    </div>
+                                )}
+                            </CardContent>
+                        </Card>
+                    </motion.div>
+                </div>
+            </div>
+        </div>
+    );
+}
