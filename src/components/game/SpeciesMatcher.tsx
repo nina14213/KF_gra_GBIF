@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -8,6 +8,7 @@ import { Search, CheckCircle, XCircle, AlertTriangle, Dna, FlaskConical } from '
 import { GameState } from '@/hooks/useGameProgress';
 import TutorialModal from './TutorialModal';
 import { useLanguage } from '@/i18n/LanguageContext';
+import { useGuideSurfaceState } from './GuideSurfaceContext';
 
 // --- Data ---
 
@@ -92,6 +93,15 @@ interface SpeciesMatcherProps {
 
 type Round = 1 | 2 | 3;
 
+const shuffleArray = <T,>(items: T[]) => {
+  const shuffled = [...items];
+  for (let i = shuffled.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  return shuffled;
+};
+
 export default function SpeciesMatcher({
   onComplete, gameState, addScore, playSuccess, playFail, playLevelComplete, startLevelTimer,
 }: SpeciesMatcherProps) {
@@ -105,6 +115,8 @@ export default function SpeciesMatcher({
   const [finished, setFinished] = useState(false);
   const [answers, setAnswers] = useState<Record<number, { chosen: string; correct: boolean }>>({});
 
+  useGuideSurfaceState({ key: 'tutorial', levelNumber: 4 }, showTutorial);
+
   const roundData: Record<Round, SpeciesEntry[]> = { 1: round1Data, 2: round2Data, 3: round3Data };
   const roundTitles: Record<Round, string> = { 1: t('species.round1'), 2: t('species.round2'), 3: t('species.round3') };
   const roundDescs: Record<Round, string> = {
@@ -117,6 +129,14 @@ export default function SpeciesMatcher({
   const currentEntry = currentData[currentIdx];
   const totalEntries = round1Data.length + round2Data.length + round3Data.length;
   const completedEntries = Object.keys(answers).length;
+  const shuffledOptionsByEntry = useMemo(() => {
+    const entries = [...round1Data, ...round2Data, ...round3Data];
+    return entries.reduce<Record<number, string[]>>((acc, entry) => {
+      const options = entry.kingdomOptions ?? entry.options ?? [];
+      acc[entry.id] = shuffleArray(options);
+      return acc;
+    }, {});
+  }, []);
 
   useEffect(() => {
     if (!showTutorial) startLevelTimer?.();
@@ -163,7 +183,7 @@ export default function SpeciesMatcher({
         }
       }, 1200);
     }, 800);
-  }, [scanning, feedback, round, currentIdx, currentData, currentEntry, addScore, playSuccess, playFail, playLevelComplete]);
+  }, [scanning, feedback, round, currentIdx, currentData, currentEntry, addScore, playSuccess, playFail, playLevelComplete, t]);
 
   if (showTutorial) {
     return (
@@ -211,7 +231,7 @@ export default function SpeciesMatcher({
     );
   }
 
-  const options = round === 3 ? currentEntry.kingdomOptions! : currentEntry.options;
+  const options = shuffledOptionsByEntry[currentEntry.id] ?? (round === 3 ? currentEntry.kingdomOptions! : currentEntry.options ?? []);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-emerald-50 via-teal-50 to-cyan-50 dark:from-slate-900 dark:via-emerald-950 dark:to-teal-950 p-4 md:p-8">
@@ -232,27 +252,27 @@ export default function SpeciesMatcher({
 
           {/* GBIF hint box */}
           <details className="mt-3 group">
-             <summary className="text-xs text-emerald-400/80 cursor-pointer hover:text-emerald-300 transition-colors flex items-center gap-1">
+              <summary className="text-xs text-emerald-700 dark:text-emerald-400/80 cursor-pointer hover:text-emerald-600 dark:hover:text-emerald-300 transition-colors flex items-center gap-1">
                <Search className="w-3 h-3" />
                {t('species.howToGBIF')}
             </summary>
-            <div className="mt-2 p-3 rounded-lg bg-muted/60 border border-emerald-300 dark:border-emerald-500/20 text-xs text-foreground/80 space-y-1.5">
+            <div className="mt-2 p-3 rounded-lg bg-muted/60 border border-emerald-300 dark:border-emerald-500/20 text-xs text-foreground space-y-1.5">
               <p>
-                <strong className="text-emerald-400">1.</strong> Wejdź na{' '}
-                <a href="https://www.gbif.org/tools/species-lookup" target="_blank" rel="noopener noreferrer" className="text-cyan-400 underline hover:text-cyan-300">
+                <strong className="text-emerald-700 dark:text-emerald-400">1.</strong> Wejdź na{' '}
+                <a href="https://www.gbif.org/tools/species-lookup" target="_blank" rel="noopener noreferrer" className="text-cyan-700 dark:text-cyan-400 underline hover:text-cyan-600 dark:hover:text-cyan-300">
                   GBIF Species Lookup
                 </a>{' '}
                 — wklej listę nazw i sprawdź dopasowania do Backbone Taxonomy.
               </p>
               <p>
-                <strong className="text-emerald-400">2.</strong> Użyj{' '}
-                <a href="https://www.gbif.org/species/search" target="_blank" rel="noopener noreferrer" className="text-cyan-400 underline hover:text-cyan-300">
+                <strong className="text-emerald-700 dark:text-emerald-400">2.</strong> Użyj{' '}
+                <a href="https://www.gbif.org/species/search" target="_blank" rel="noopener noreferrer" className="text-cyan-700 dark:text-cyan-400 underline hover:text-cyan-600 dark:hover:text-cyan-300">
                   GBIF Species Search
                 </a>{' '}
                 — wpisz nazwę gatunku, aby zobaczyć jego status (accepted/synonym), królestwo i pełną hierarchię.
               </p>
               <p>
-                <strong className="text-emerald-400">3.</strong> Sprawdź kolumnę <em className="text-amber-400">taxonomicStatus</em> — wartość „ACCEPTED" oznacza aktualną nazwę, „SYNONYM" to synonim przekierowujący do akceptowanej nazwy.
+                <strong className="text-emerald-700 dark:text-emerald-400">3.</strong> Sprawdź kolumnę <em className="text-amber-700 dark:text-amber-400">taxonomicStatus</em> — wartość „ACCEPTED" oznacza aktualną nazwę, „SYNONYM" to synonim przekierowujący do akceptowanej nazwy.
               </p>
             </div>
           </details>
@@ -271,7 +291,7 @@ export default function SpeciesMatcher({
               <CardHeader className="pb-3">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-lg bg-emerald-500/20 flex items-center justify-center">
-                    {round === 3 ? <Dna className="w-5 h-5 text-emerald-400" /> : <Search className="w-5 h-5 text-emerald-400" />}
+                    {round === 3 ? <Dna className="w-5 h-5 text-emerald-700 dark:text-emerald-400" /> : <Search className="w-5 h-5 text-emerald-700 dark:text-emerald-400" />}
                   </div>
                   <div>
                     <CardTitle className="text-lg text-foreground font-mono italic">{currentEntry.inputName}</CardTitle>
@@ -280,7 +300,7 @@ export default function SpeciesMatcher({
                      </p>
                   </div>
                   {currentEntry.errorType !== 'correct' && round !== 3 && (
-                    <Badge className="ml-auto bg-amber-500/20 text-amber-400 border-amber-500/30">
+                    <Badge className="ml-auto bg-amber-500/20 text-amber-700 dark:text-amber-400 border-amber-500/30">
                        <AlertTriangle className="w-3 h-3 mr-1" />
                        {currentEntry.errorType === 'typo' ? t('species.typo') : currentEntry.errorType === 'synonym' ? t('species.synonym') : t('species.subspecies')}
                     </Badge>
@@ -325,9 +345,9 @@ export default function SpeciesMatcher({
 
                 {/* Options */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {options.map((opt, idx) => (
+                  {options.map((opt) => (
                     <motion.button
-                      key={idx}
+                      key={`${currentEntry.id}-${opt}`}
                       whileHover={!scanning && !feedback ? { scale: 1.03 } : {}}
                       whileTap={!scanning && !feedback ? { scale: 0.97 } : {}}
                       onClick={() => handleAnswer(opt)}

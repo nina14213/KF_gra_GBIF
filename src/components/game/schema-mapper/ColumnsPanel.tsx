@@ -1,0 +1,246 @@
+/**
+ * @file ColumnsPanel.tsx
+ * @description Panel lewej strony — wyświetla kolumny źródłowe użytkownika.
+ *
+ * Funkcje:
+ * - Pokazuje wszystkie kolumny z pliku CSV/XLSX
+ * - Obsługuje drag & drop oraz tap-to-select (mobile)
+ * - Wyświetla próbki wartości i istniejące mapowania
+ * - Pozwala usuwać mapowania kliknięciem w badge
+ */
+
+import React, { useRef } from "react";
+import { normalizeHeader } from '../AutoMatchDialog';
+import { motion } from "framer-motion";
+import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Progress } from "@/components/ui/progress";
+import { FileSpreadsheet, MousePointerClick, Lightbulb } from "lucide-react";
+import { useLanguage } from "@/i18n/LanguageContext";
+import { isMultiMapColumn } from "./useSchemaMapperState";
+import ColumnTypeHint from "./ColumnTypeHint";
+
+interface ColumnsPanelProps {
+  columns: string[];
+  dataRowCount: number;
+  mappedColumnsCount: number;
+  selectedColumn: string | null;
+  draggedColumn: string | null;
+  onTapSelectColumn: (col: string) => void;
+  onDragStart: (e: React.DragEvent, col: string) => void;
+  onDragEnd: () => void;
+  onClearSelectedColumn: () => void;
+  getColumnMapping: (col: string) => string | null;
+  getAllColumnMappings: (col: string) => string[];
+  getSampleValues: (col: string) => string;
+  onRemoveMapping: (term: string) => void;
+  /** Smart autodetect suggestions: column → suggested DwC term */
+  columnSuggestions?: Record<string, string>;
+  /** Callback to quick-apply a suggestion */
+  onApplySuggestion?: (column: string, term: string) => void;
+}
+
+export default function ColumnsPanel({
+  columns,
+  dataRowCount,
+  mappedColumnsCount,
+  selectedColumn,
+  draggedColumn,
+  onTapSelectColumn,
+  onDragStart,
+  onDragEnd,
+  onClearSelectedColumn,
+  getColumnMapping,
+  getAllColumnMappings,
+  getSampleValues,
+  onRemoveMapping,
+  columnSuggestions = {},
+  onApplySuggestion,
+}: ColumnsPanelProps) {
+  const { t } = useLanguage();
+  const suppressClickAfterDragRef = useRef<string | null>(null);
+
+  return (
+    <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.2 }}>
+      <Card data-tour="columns-panel" className="bg-card/90 border-border backdrop-blur h-full">
+        <CardHeader className="border-b border-border pb-3">
+          <CardTitle className="text-card-foreground flex items-center justify-between">
+            <span className="flex items-center gap-2">
+              <FileSpreadsheet className="w-5 h-5 text-muted-foreground" aria-hidden="true" />
+              {t("schema.yourColumns")} ({columns.length})
+            </span>
+            <Badge variant="secondary">
+              {dataRowCount} {t("schema.rows")}
+            </Badge>
+          </CardTitle>
+          {/* Mapping progress bar */}
+          <div className="mt-2 space-y-1">
+            <div className="flex items-center justify-between text-xs text-muted-foreground">
+              <span>{t("wizard.mappedColumns", { mapped: mappedColumnsCount, total: columns.length })}</span>
+              <span className="font-mono">{Math.round((mappedColumnsCount / columns.length) * 100)}%</span>
+            </div>
+            <Progress
+              value={(mappedColumnsCount / columns.length) * 100}
+              aria-label={t("wizard.mappedColumns", { mapped: mappedColumnsCount, total: columns.length })}
+              className="h-2"
+            />
+          </div>
+        </CardHeader>
+        <CardContent className="pt-4 max-h-[50vh] md:max-h-[60vh] overflow-y-auto space-y-2">
+          {/* Mobile hint */}
+          <p className="text-xs text-muted-foreground md:hidden mb-2 flex items-center gap-1">
+            👆 {t("core.tapToSelect")}
+          </p>
+          {/* Selected column banner (mobile) */}
+          {selectedColumn && (
+            <div className="md:hidden p-2 rounded-lg bg-indigo-500/20 border border-indigo-500/50 text-indigo-200 text-sm flex items-center gap-2 mb-2">
+              <span>👆</span>
+              {t("core.selectedColumn", { column: selectedColumn })}
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => onClearSelectedColumn()}
+                aria-label="Anuluj wybor kolumny"
+                className="ml-auto h-5 px-1 text-indigo-300"
+              >
+                ✕
+              </Button>
+            </div>
+          )}
+          {columns.map((column, idx) => {
+            const mappedTo = getColumnMapping(column);
+            const allMappedTo = getAllColumnMappings(column);
+            const isSelected = selectedColumn === column;
+            const isIdColumn = isMultiMapColumn(column);
+             return (
+              <motion.div
+                key={column}
+                initial={{ opacity: 0, x: -10 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: idx * 0.05 }}
+              >
+                <div
+                  draggable
+                  onDragStart={(e) => {
+                    suppressClickAfterDragRef.current = column;
+                    onDragStart(e, column);
+                  }}
+                  onDragEnd={() => {
+                    onDragEnd();
+                    window.setTimeout(() => {
+                      suppressClickAfterDragRef.current = null;
+                    }, 500);
+                  }}
+                  onClick={() => {
+                    if (suppressClickAfterDragRef.current === column) {
+                      suppressClickAfterDragRef.current = null;
+                      return;
+                    }
+                    onTapSelectColumn(column);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      onTapSelectColumn(column);
+                    }
+                  }}
+                  role="button"
+                  tabIndex={0}
+                  aria-pressed={isSelected}
+                  aria-label={`Kolumna ${column}${allMappedTo.length > 0 ? `, zmapowana do ${allMappedTo.join(", ")}` : ", niezmapowana"}. Nacisnij Enter lub Spacje, aby ${isSelected ? "odznaczyc" : "wybrac"} kolumne.`}
+                  className={`
+                    p-4 rounded-xl border-2 cursor-grab active:cursor-grabbing transition-all
+                    md:cursor-grab cursor-pointer
+                    ${
+                      isSelected
+                        ? "border-indigo-500 bg-indigo-500/20 ring-2 ring-indigo-400/50"
+                        : mappedTo
+                          ? "border-green-500/50 bg-green-500/10"
+                          : "border-border bg-muted/50 hover:border-purple-500/50"
+                    }
+                    ${draggedColumn === column ? "opacity-50 scale-95" : ""}
+                  `}
+                >
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="flex items-center gap-2">
+                      <MousePointerClick className="w-4 h-4 text-muted-foreground md:hidden flex-shrink-0" aria-hidden="true" />
+                      <span className="font-semibold text-foreground">{column}</span>
+                      {isIdColumn && allMappedTo.length > 1 && (
+                        <Badge variant="secondary" className="text-[10px] h-4 px-1">
+                          ×{allMappedTo.length}
+                        </Badge>
+                      )}
+                    </div>
+                    {isSelected && <MousePointerClick className="w-4 h-4 text-indigo-400" aria-hidden="true" />}
+                    {allMappedTo.length > 0 && (
+                      <div className="flex flex-wrap gap-1 justify-end max-w-[60%]">
+                        {allMappedTo.slice(0, 5).map(term => (
+                          <Badge
+                            key={term}
+                            variant="outline"
+                            className="text-green-400 border-green-500/50 text-[10px] px-1 cursor-pointer hover:bg-red-500/20 hover:border-red-500/50 hover:text-red-400 transition-colors"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onRemoveMapping(term);
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                onRemoveMapping(term);
+                              }
+                            }}
+                            role="button"
+                            tabIndex={0}
+                            aria-label={`${t("common.remove")}: ${term}`}
+                            title={`Kliknij aby usunąć mapowanie → ${term}`}
+                          >
+                            → {term} ✕
+                          </Badge>
+                        ))}
+                        {allMappedTo.length > 5 && (
+                          <Badge variant="outline" className="text-green-400 border-green-500/50 text-[10px] px-1">
+                            +{allMappedTo.length - 5}
+                          </Badge>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  <p className="text-xs text-muted-foreground truncate">
+                    {t("schema.samplePrefix")} {getSampleValues(column) || "—"}
+                  </p>
+                  <ColumnTypeHint sampleValues={getSampleValues(column)} />
+                  {/* Smart suggestion badge */}
+                  {!mappedTo && columnSuggestions[column] && (() => {
+                    const isExactMatch = normalizeHeader(column) === normalizeHeader(columnSuggestions[column]);
+                    return (
+                    <div className="mt-1.5 flex items-center gap-1.5">
+                      <Lightbulb className="w-3 h-3 text-amber-500 flex-shrink-0" aria-hidden="true" />
+                      <span className="text-[10px] text-amber-600 dark:text-amber-400">
+                        Pasuje do: <strong>{columnSuggestions[column]}</strong>
+                      </span>
+                      {!isExactMatch && onApplySuggestion && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onApplySuggestion(column, columnSuggestions[column]);
+                          }}
+                          className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-600 dark:text-amber-400 hover:bg-amber-500/30 transition-colors border border-amber-500/30"
+                        >
+                          Przypisz →
+                        </button>
+                      )}
+                    </div>
+                    );
+                  })()}
+                </div>
+              </motion.div>
+            );
+          })}
+        </CardContent>
+      </Card>
+    </motion.div>
+  );
+}

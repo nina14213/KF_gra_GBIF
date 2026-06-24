@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from "react";
+import React, { useState, useCallback, useEffect, useMemo } from "react";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent, CardFooter } from "@/components/ui/card";
@@ -14,7 +14,6 @@ import {
   XCircle,
   Check,
   Lightbulb,
-  BookOpen,
   Clipboard,
   Key,
   Sparkles,
@@ -23,10 +22,37 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import TutorialModal from "./TutorialModal";
 import EscapeRoom from "./EscapeRoom";
 import { GameState } from "@/hooks/useGameProgress";
+import { useCountdownTimer } from "@/hooks/useCountdownTimer";
 import { useLanguage } from "@/i18n/LanguageContext";
+import { calculateTimeBonus, formatCountdownTime } from "./gameHelpers";
+import { useGuideSurfaceState } from "./GuideSurfaceContext";
+
+// PL: Ksztalt wiersza, ktory gracz uzupelnia w tabeli occurrence.
+// EN: Shape of the occurrence row filled in by the player.
+interface OccurrenceRow {
+  eventID: string;
+  scientificName: string;
+  recordedBy: string;
+  organismQuantity: string;
+  organismQuantityType: string;
+}
+
+interface OccurrenceValidationError {
+  row: number;
+  field: keyof OccurrenceRow;
+  message: string;
+}
+
+const OCCURRENCE_FIELDS: Array<keyof OccurrenceRow> = [
+  "eventID",
+  "scientificName",
+  "recordedBy",
+  "organismQuantity",
+  "organismQuantityType",
+];
 
 // Field notes from scientists - contains extra "messy" information
-const fieldNotes = [
+const baseFieldNotes = [
   {
     scientist: "Mgr. Katarzyna Słupecka",
     date: "25 October 2025",
@@ -40,7 +66,7 @@ const fieldNotes = [
         weather: "Partly cloudy, 14°C, light wind from SW",
         habitat: "Forest edge near abandoned railroad tracks, sandy soil",
         observation:
-          "Found a single mature Tree of Heaven (Ailanthus altissima). Height approximately 8m, DBH ~25cm. Bark grayish-brown with shallow fissures. Strong unpleasant odor from crushed leaves. Signs of root sprouting nearby. Photographed specimen #KS-341.",
+          "A solitary Ailanthus altissima was growing at the forest margin beside the disused tracks. Tree c. 8 m tall, DBH close to 25 cm; bark dull grey with shallow fissures. Freshly crushed leaves released the typical sharp odor. Several young root suckers were visible within a couple of meters. Photographed as specimen #KS-341.",
         quantity: "1 individual",
         eventID: "3431",
       },
@@ -52,7 +78,7 @@ const fieldNotes = [
         weather: "Partly cloudy, 15°C",
         habitat: "Small ornamental bush area, urban park setting",
         observation:
-          "Single young Ailanthus altissima sapling growing between shrubs. Height ~2m, stem diameter 4cm. Likely spread from nearby mature tree. Compound leaves with 13-25 leaflets observed. Sample collected for herbarium (voucher #KS-343).",
+          "Between decorative shrubs I noticed a juvenile Ailanthus altissima, most likely a self-seeded recruit from a nearby street tree. Height roughly 2 m, stem about 4 cm in diameter. Compound leaves were well developed, with 13-25 leaflets and clear basal glands. A small voucher branch was collected for the herbarium (#KS-343).",
         quantity: "1 individual",
         eventID: "3433",
       },
@@ -71,7 +97,7 @@ const fieldNotes = [
         weather: "Sunny, 22°C, no wind",
         habitat: "Urban park, near walking path, loamy soil",
         observation:
-          "Observed one Tree of Heaven (Ailanthus altissima) specimen. Mature tree, estimated height 12m, trunk circumference 95cm (DBH ~30cm). Crown asymmetrical due to neighboring buildings. Distinctive pinnate leaves, 40-60cm long. No flowering observed yet. GPS marked for monitoring.",
+          "One mature Ailanthus altissima was recorded along the park path. Estimated height around 12 m, DBH near 30 cm, with the crown leaning toward the open light between adjacent buildings. Pinnate leaves measured roughly 40-60 cm in length. No flowers or samaras were present during inspection. GPS position marked for follow-up monitoring.",
         quantity: "1 individual",
         eventID: "3432",
       },
@@ -83,7 +109,7 @@ const fieldNotes = [
         weather: "Sunny, 23°C",
         habitat: "Park lawn area, proximity to old buildings",
         observation:
-          "Single Ailanthus altissima tree identified. Medium-sized specimen, height ~6m, DBH 15cm. Growing at park edge near fence. Leaves showing typical glandular base on leaflets. Evidence of previous pruning attempts. Noted for invasive species monitoring program.",
+          "At the edge of the lawn, close to an old fence line, a medium-sized Ailanthus altissima was confirmed. Height about 6 m, DBH approximately 15 cm. Recent pruning scars were visible on the lower crown, but the tree still appeared vigorous. Typical leaflet glands were easy to see. Added to the invasive species monitoring list.",
         quantity: "1 individual",
         eventID: "3434",
       },
@@ -92,7 +118,7 @@ const fieldNotes = [
 ];
 
 // Expected correct values for validation
-const expectedOccurrenceData = [
+const expectedOccurrenceData: OccurrenceRow[] = [
   {
     eventID: "3431",
     scientificName: "Ailanthus altissima",
@@ -124,7 +150,7 @@ const expectedOccurrenceData = [
 ];
 
 // Initial occurrence data with blanks for player to fill
-const initialOccurrenceData = [
+const initialOccurrenceData: OccurrenceRow[] = [
   { eventID: "3431", scientificName: "", recordedBy: "", organismQuantity: "", organismQuantityType: "" },
   { eventID: "", scientificName: "", recordedBy: "", organismQuantity: "1", organismQuantityType: "" },
   {
@@ -138,12 +164,63 @@ const initialOccurrenceData = [
 ];
 
 // Event reference table (simplified from field notes)
-const eventReference = [
+const baseEventReference = [
   { eventID: "3431", eventDate: "25.10.2025 11:21", locality: "Dębina municipal forest", recorder: "K. Słupecka" },
   { eventID: "3432", eventDate: "23.05.2025 15:47", locality: "M. Skłodowskiej-Curie Park", recorder: "M. Kowalski" },
   { eventID: "3433", eventDate: "25.10.2025 11:21", locality: "John Paul II Park", recorder: "K. Słupecka" },
   { eventID: "3434", eventDate: "23.05.2025 15:47", locality: "Powstańców Wlkp. Street park", recorder: "M. Kowalski" },
 ];
+
+// PL: Waliduje pojedynczy wiersz i zwraca precyzyjne bledy dla UI.
+// EN: Validates one row and returns field-level errors for the UI.
+function validateOccurrenceRow(
+  row: OccurrenceRow,
+  expected: OccurrenceRow,
+  rowNumber: number,
+  validEventIds: Set<string>,
+): OccurrenceValidationError[] {
+  const errors: OccurrenceValidationError[] = [];
+
+  if (!row.eventID) {
+    errors.push({ row: rowNumber, field: "eventID", message: "Brak wartości" });
+  } else if (!validEventIds.has(row.eventID)) {
+    errors.push({ row: rowNumber, field: "eventID", message: "Nieprawidłowy eventID" });
+  } else if (row.eventID !== expected.eventID) {
+    errors.push({ row: rowNumber, field: "eventID", message: "Błędna odpowiedź" });
+  }
+
+  OCCURRENCE_FIELDS.filter((field) => field !== "eventID").forEach((field) => {
+    if (!row[field]) {
+      errors.push({ row: rowNumber, field, message: "Brak wartości" });
+    } else if (row[field] !== expected[field]) {
+      errors.push({ row: rowNumber, field, message: "Błędna odpowiedź" });
+    }
+  });
+
+  return errors;
+}
+
+// PL: Usuwa tylko te odpowiedzi, ktore sa wypelnione i niezgodne z kluczem.
+// EN: Clears only filled answers that do not match the answer key.
+function clearInvalidOccurrenceValues(row: OccurrenceRow, expected: OccurrenceRow): OccurrenceRow {
+  const cleaned = { ...row };
+
+  OCCURRENCE_FIELDS.forEach((field) => {
+    if (row[field] && row[field] !== expected[field]) {
+      cleaned[field] = "";
+    }
+  });
+
+  return cleaned;
+}
+
+// PL: Liczy wypelnione komorki niezaleznie od ich poprawnosci.
+// EN: Counts filled cells independently from validation correctness.
+function countFilledOccurrenceCells(rows: OccurrenceRow[]): number {
+  return rows.reduce((filledCount, row) => {
+    return filledCount + OCCURRENCE_FIELDS.filter((field) => Boolean(row[field])).length;
+  }, 0);
+}
 
 interface ExtensionLinkerProps {
   onComplete?: (score: number, data: unknown) => void;
@@ -165,11 +242,119 @@ export default function ExtensionLinker({
   playLevelComplete,
   startLevelTimer,
 }: ExtensionLinkerProps) {
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
+  const pick = useCallback((pl: string, en: string, fr: string, de: string) => {
+    if (language === "en") return en;
+    if (language === "fr") return fr;
+    if (language === "de") return de;
+    return pl;
+  }, [language]);
+
+  const noteUiCopy = useMemo(() => ({
+    fieldNotesTitle: pick("Notatki terenowe", "Field Notes", "Notes de terrain", "Feldnotizen"),
+    fieldObservationIdLabel: pick("Obserwacja terenowa ID", "Field observation ID", "ID d'observation de terrain", "Feldbeobachtung-ID"),
+    entryLabel: pick("Wpis", "Entry", "Entrée", "Eintrag"),
+    timeLabel: pick("Godzina", "Time", "Heure", "Uhrzeit"),
+    weatherLabel: pick("Pogoda", "Weather", "Météo", "Wetter"),
+    locationLabel: pick("Lokalizacja", "Location", "Lieu", "Fundort"),
+    gpsLabel: "GPS",
+    habitatLabel: pick("Siedlisko", "Habitat", "Habitat", "Habitat"),
+    observationLabel: pick("Opis obserwacji", "Observation Notes", "Notes d'observation", "Beobachtungsnotizen"),
+    quantityLabel: pick("Liczebność", "Quantity", "Quantité", "Menge"),
+    dbhExplanation: pick(
+      "Pierśnica (DBH) to średnica pnia drzewa mierzona na wysokości 130 cm nad powierzchnią gruntu.",
+      "DBH = trunk diameter measured at about 130 cm above ground.",
+      "DBH = diamètre du tronc mesuré à environ 130 cm du sol.",
+      "DBH = Stammdurchmesser, gemessen in etwa 130 cm Höhe."
+    ),
+    eventDateHeader: pick("Data zdarzenia", "eventDate", "eventDate", "eventDate"),
+    localityHeader: pick("Lokalizacja", "Locality", "Localité", "Fundort"),
+    recorderHeader: pick("Obserwator", "Recorder", "Observateur", "Erfasser"),
+    validationTitle: pick("Status walidacji", "Validation Status", "Statut de validation", "Validierungsstatus"),
+    progressComplete: pick("ukończono", "complete", "terminé", "abgeschlossen"),
+    errorsLabel: pick("błędów", "errors", "erreurs", "Fehler"),
+    pointsUnit: pick("pkt", "pts", "pts", "Pkt."),
+    selectEventId: pick("Wybierz eventID", "Select eventID", "Sélectionner eventID", "eventID auswählen"),
+    selectSpecies: pick("Wybierz gatunek", "Select species", "Sélectionner l'espèce", "Art auswählen"),
+    selectRecorder: pick("Wybierz obserwatora", "Select recorder", "Sélectionner l'observateur", "Erfasser auswählen"),
+    quantityPlaceholder: pick("Liczba", "Quantity", "Quantité", "Menge"),
+    typePlaceholder: pick("Typ", "Type", "Type", "Typ"),
+    individualLabel: pick("osobnik", "individual", "individu", "Individuum"),
+    colonyLabel: pick("kolonia", "colony", "colonie", "Kolonie"),
+    clumpLabel: pick("kępa", "clump", "touffe", "Horst"),
+    patchLabel: pick("płat", "patch", "plaque", "Bestand"),
+    populationLabel: pick("populacja", "population", "population", "Population"),
+  }), [pick]);
+
+  const fieldNotes = useMemo(() => {
+    if (language !== "pl") return baseFieldNotes;
+
+    return [
+      {
+        ...baseFieldNotes[0],
+        date: "25 października 2025",
+        entries: [
+          {
+            ...baseFieldNotes[0].entries[0],
+            location: "Las Dębina w Poznaniu, Polska",
+            weather: "Przejaśnienia, 14°C, lekki SW",
+            habitat: "Skraj lasu przy torach, piach",
+            observation:
+              "1 × Ailanthus altissima. Skraj lasu przy torach. Wys. ok. 8 m, DBH ~25 cm. Kora szarawa, płytko spękana. Liście po roztarciu ostry zapach. W pobliżu kilka młodych odrostów. Foto #KS-341.",
+            quantity: "1 osobnik",
+          },
+          {
+            ...baseFieldNotes[0].entries[1],
+            location: "W Parku Jana Pawła II, naprzeciw skrzyżowania ulic Krzyżowej i Dolna Wilda w Poznaniu",
+            weather: "Lekko pochmurno, 15°C",
+            habitat: "Pas krzewów ozdobnych, park miejski",
+            observation:
+              "1 × juv. Ailanthus altissima między krzewami. Wys. ok. 2 m, śr. pędu ok. 4 cm. Liście złożone, 13-25 listków, gruczołki u nasady widoczne. Prawdopodobnie samosiew z pobliskiego drzewa. Pobrano gałązkę zielnikową, voucher #KS-343.",
+            quantity: "1 osobnik",
+          },
+        ],
+      },
+      {
+        ...baseFieldNotes[1],
+        date: "23 maja 2025",
+        entries: [
+          {
+            ...baseFieldNotes[1].entries[0],
+            location: "Park im. Marii Skłodowskiej-Curie w Poznaniu, Polska",
+            weather: "Słonecznie, 22°C, wiatr niewyczuwalny",
+            habitat: "Park miejski przy alejce spacerowej; podłoże gliniaste",
+            observation:
+              "Przy alejce parkowej stwierdzono dojrzały okaz Ailanthus altissima. Wysokość oszacowano na około 12 m, DBH na blisko 30 cm. Korona rozwinięta jednostronnie, z wyraźnym wychyleniem ku wolnej przestrzeni między zabudową. Liście pierzaste długości około 40-60 cm. W dniu obserwacji nie odnotowano kwiatów ani skrzydlaków. Lokalizację zapisano do dalszej kontroli.",
+            quantity: "1 osobnik",
+          },
+          {
+            ...baseFieldNotes[1].entries[1],
+            location: "W parku przy ul. Powstańców Wielkopolskich w Poznaniu",
+            weather: "Słonecznie, 23°C",
+            habitat: "Trawnik parkowy w sąsiedztwie starszej zabudowy i ogrodzenia",
+            observation:
+              "Na obrzeżu trawnika, przy starej linii ogrodzenia, potwierdzono średniej wielkości okaz Ailanthus altissima. Wysokość oceniono na około 6 m, DBH na około 15 cm. W dolnej części korony widoczne świeże ślady wcześniejszych cięć pielęgnacyjnych, bez wyraźnego pogorszenia kondycji drzewa. Gruczołki u nasady listków czytelne. Stanowisko włączono do monitoringu gatunków inwazyjnych.",
+            quantity: "1 osobnik",
+          },
+        ],
+      },
+    ];
+  }, [language]);
+
+  const eventReference = useMemo(() => {
+    if (language !== "pl") return baseEventReference;
+
+    return [
+      { ...baseEventReference[0], locality: "las Dębina" },
+      { ...baseEventReference[1], locality: "Park im. M. Skłodowskiej-Curie" },
+      { ...baseEventReference[2], locality: "Park Jana Pawła II" },
+      { ...baseEventReference[3], locality: "park przy ul. Powstańców Wlkp." },
+    ];
+  }, [language]);
   const [occurrenceData, setOccurrenceData] = useState(initialOccurrenceData);
   const [validationStatus, setValidationStatus] = useState<{
     valid: boolean;
-    errors: Array<{ row: number; field: string; message: string }>;
+    errors: OccurrenceValidationError[];
   }>({ valid: false, errors: [] });
   const [showTutorial, setShowTutorial] = useState(true);
   const [levelScore, setLevelScore] = useState(0);
@@ -177,70 +362,34 @@ export default function ExtensionLinker({
   const [isTimerRunning, setIsTimerRunning] = useState(true);
   const [showEscapeRoom, setShowEscapeRoom] = useState(false);
 
-  const eventIds = new Set(eventReference.map((row) => row.eventID));
+  useGuideSurfaceState({ key: "tutorial", levelNumber: 2 }, showTutorial && !showEscapeRoom);
+  useGuideSurfaceState({ key: "extensionEscapeRoom" }, showEscapeRoom);
+
+  const eventIds = useMemo(() => new Set(eventReference.map((row) => row.eventID)), [eventReference]);
 
   useEffect(() => {
     startLevelTimer?.();
   }, [startLevelTimer]);
 
-  // Timer countdown
-  useEffect(() => {
-    if (!isTimerRunning || timeLeft <= 0) return;
-    const timer = setInterval(() => {
-      setTimeLeft((prev) => {
-        if (prev <= 1) {
-          setIsTimerRunning(false);
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [isTimerRunning, timeLeft]);
+  // PL: Odliczanie jest wspolne z innymi poziomami gry.
+  // EN: Countdown behavior is shared with the other game levels.
+  const handleTimerExpired = useCallback(() => {
+    setIsTimerRunning(false);
+  }, []);
 
-  // Validate occurrence data - must match exactly the expected values
+  useCountdownTimer({
+    isRunning: isTimerRunning,
+    timeLeft,
+    setTimeLeft,
+    onExpire: handleTimerExpired,
+  });
+
+  // PL: Walidacja musi pasowac dokladnie do klucza odpowiedzi dla tego poziomu.
+  // EN: Validation must match this level's answer key exactly.
   const validateOccurrences = useCallback(() => {
-    const errors: Array<{ row: number; field: string; message: string }> = [];
-    occurrenceData.forEach((row, idx) => {
-      const expected = expectedOccurrenceData[idx];
-
-      // Check eventID
-      if (!row.eventID) {
-        errors.push({ row: idx + 1, field: "eventID", message: "Brak wartości" });
-      } else if (!eventIds.has(row.eventID)) {
-        errors.push({ row: idx + 1, field: "eventID", message: "Nieprawidłowy eventID" });
-      } else if (row.eventID !== expected.eventID) {
-        errors.push({ row: idx + 1, field: "eventID", message: "Błędna odpowiedź" });
-      }
-
-      // Check scientificName
-      if (!row.scientificName) {
-        errors.push({ row: idx + 1, field: "scientificName", message: "Brak wartości" });
-      } else if (row.scientificName !== expected.scientificName) {
-        errors.push({ row: idx + 1, field: "scientificName", message: "Błędna odpowiedź" });
-      }
-
-      // Check recordedBy
-      if (!row.recordedBy) {
-        errors.push({ row: idx + 1, field: "recordedBy", message: "Brak wartości" });
-      } else if (row.recordedBy !== expected.recordedBy) {
-        errors.push({ row: idx + 1, field: "recordedBy", message: "Błędna odpowiedź" });
-      }
-
-      // Check organismQuantity
-      if (!row.organismQuantity) {
-        errors.push({ row: idx + 1, field: "organismQuantity", message: "Brak wartości" });
-      } else if (row.organismQuantity !== expected.organismQuantity) {
-        errors.push({ row: idx + 1, field: "organismQuantity", message: "Błędna odpowiedź" });
-      }
-
-      // Check organismQuantityType
-      if (!row.organismQuantityType) {
-        errors.push({ row: idx + 1, field: "organismQuantityType", message: "Brak wartości" });
-      } else if (row.organismQuantityType !== expected.organismQuantityType) {
-        errors.push({ row: idx + 1, field: "organismQuantityType", message: "Błędna odpowiedź" });
-      }
-    });
+    const errors = occurrenceData.flatMap((row, idx) =>
+      validateOccurrenceRow(row, expectedOccurrenceData[idx], idx + 1, eventIds),
+    );
 
     setValidationStatus({ valid: errors.length === 0, errors });
     if (errors.length === 0) {
@@ -251,37 +400,18 @@ export default function ExtensionLinker({
     return errors;
   }, [occurrenceData, eventIds, playSuccess, playFail]);
 
-  // Clear wrong answers
+  // PL: Pomoc dla gracza - zostawia poprawne pola i kasuje tylko bledne.
+  // EN: Player assist - keeps correct fields and clears only wrong ones.
   const clearWrongAnswers = useCallback(() => {
     setOccurrenceData((prev) => {
-      return prev.map((row, idx) => {
-        const expected = expectedOccurrenceData[idx];
-        const newRow = { ...row };
-
-        if (row.eventID && row.eventID !== expected.eventID) {
-          newRow.eventID = "";
-        }
-        if (row.scientificName && row.scientificName !== expected.scientificName) {
-          newRow.scientificName = "";
-        }
-        if (row.recordedBy && row.recordedBy !== expected.recordedBy) {
-          newRow.recordedBy = "";
-        }
-        if (row.organismQuantity && row.organismQuantity !== expected.organismQuantity) {
-          newRow.organismQuantity = "";
-        }
-        if (row.organismQuantityType && row.organismQuantityType !== expected.organismQuantityType) {
-          newRow.organismQuantityType = "";
-        }
-
-        return newRow;
-      });
+      return prev.map((row, idx) => clearInvalidOccurrenceValues(row, expectedOccurrenceData[idx]));
     });
     setValidationStatus({ valid: false, errors: [] });
   }, []);
 
-  // Update occurrence cell value
-  const updateOccurrenceCell = useCallback((rowIndex: number, field: string, value: string) => {
+  // PL: Kazda edycja uniewaznia poprzedni wynik walidacji.
+  // EN: Every edit invalidates the previous validation result.
+  const updateOccurrenceCell = useCallback((rowIndex: number, field: keyof OccurrenceRow, value: string) => {
     setOccurrenceData((prev) => {
       const updated = [...prev];
       updated[rowIndex] = { ...updated[rowIndex], [field]: value };
@@ -290,27 +420,16 @@ export default function ExtensionLinker({
     setValidationStatus({ valid: false, errors: [] });
   }, []);
 
-  // Calculate score
+  // PL: Wynik laczy poprawna walidacje, wypelnienie tabeli i bonus za czas.
+  // EN: Score combines valid data, table completion, and the time bonus.
   useEffect(() => {
     let score = 0;
     if (validationStatus.valid) score += 200;
 
     const totalCells = occurrenceData.length * 5;
-    const filledCells = occurrenceData.reduce((acc, row) => {
-      return (
-        acc +
-        (row.eventID ? 1 : 0) +
-        (row.scientificName ? 1 : 0) +
-        (row.recordedBy ? 1 : 0) +
-        (row.organismQuantity ? 1 : 0) +
-        (row.organismQuantityType ? 1 : 0)
-      );
-    }, 0);
+    const filledCells = countFilledOccurrenceCells(occurrenceData);
     score += Math.floor((filledCells / totalCells) * 100);
-
-    if (timeLeft > 240) score += 50;
-    else if (timeLeft > 180) score += 30;
-    else if (timeLeft > 60) score += 10;
+    score += calculateTimeBonus(timeLeft);
 
     setLevelScore(score);
   }, [validationStatus, occurrenceData, timeLeft]);
@@ -333,12 +452,6 @@ export default function ExtensionLinker({
     addScore?.(escapeScore, "Escape Room Complete");
     playLevelComplete?.();
     onComplete?.(escapeScore, data);
-  };
-
-  const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins}:${secs.toString().padStart(2, "0")}`;
   };
 
   // Escape Room Mode
@@ -379,21 +492,21 @@ export default function ExtensionLinker({
                 }`}
               >
                 <Timer className={`w-5 h-5 ${timeLeft < 60 ? "animate-pulse" : ""}`} />
-                <span className="font-mono text-lg">{formatTime(timeLeft)}</span>
+                <span className="font-mono text-lg">{formatCountdownTime(timeLeft)}</span>
               </div>
               <Badge
                 variant="outline"
                 className="text-lg px-4 py-2 border-purple-400 text-purple-600 dark:border-purple-500 dark:text-purple-400"
               >
-                {levelScore} pts
+                {levelScore} {noteUiCopy.pointsUnit}
               </Badge>
             </div>
           </div>
 
           <Progress value={progress} className="h-3 bg-gray-200 dark:bg-slate-700" />
           <div className="flex justify-between text-sm mt-2 text-gray-600 dark:text-slate-400">
-            <span>{Math.round(progress)}% complete</span>
-            <span>{validationStatus.errors.length} errors</span>
+            <span>{Math.round(progress)}% {noteUiCopy.progressComplete}</span>
+            <span>{validationStatus.errors.length} {noteUiCopy.errorsLabel}</span>
           </div>
         </motion.div>
 
@@ -441,7 +554,7 @@ export default function ExtensionLinker({
               <CardHeader className="pb-2">
                 <CardTitle className="text-amber-900 dark:text-amber-200 flex items-center gap-2 text-lg">
                   <Clipboard className="w-5 h-5" />
-                  Field Notes: {note.noteId}
+                  {noteUiCopy.fieldNotesTitle}: {note.noteId}
                 </CardTitle>
                 <div className="text-sm text-amber-700 dark:text-amber-400">
                   <span className="font-semibold">{note.scientist}</span> • {note.date}
@@ -458,40 +571,40 @@ export default function ExtensionLinker({
                         variant="outline"
                         className="bg-purple-100 text-purple-700 border-purple-300 dark:bg-purple-900/50 dark:text-purple-300 dark:border-purple-600"
                       >
-                        Event ID: {entry.eventID}
+                        {noteUiCopy.fieldObservationIdLabel}: {entry.eventID}
                       </Badge>
-                      <span className="text-xs text-gray-500 dark:text-gray-400">Entry #{entry.entryNumber}</span>
+                      <span className="text-xs text-gray-500 dark:text-gray-400">{noteUiCopy.entryLabel} #{entry.entryNumber}</span>
                     </div>
 
                     <div className="space-y-2 text-sm">
                       <div className="grid grid-cols-2 gap-2 text-gray-600 dark:text-gray-400">
                         <div>
-                          <span className="font-medium">Time:</span> {entry.time}
+                          <span className="font-medium">{noteUiCopy.timeLabel}:</span> {entry.time}
                         </div>
                         <div>
-                          <span className="font-medium">Weather:</span> {entry.weather}
+                          <span className="font-medium">{noteUiCopy.weatherLabel}:</span> {entry.weather}
                         </div>
                       </div>
 
                       <div>
-                        <span className="font-medium text-gray-700 dark:text-gray-300">Location:</span>
+                        <span className="font-medium text-gray-700 dark:text-gray-300">{noteUiCopy.locationLabel}:</span>
                         <p className="text-gray-600 dark:text-gray-400 text-xs mt-1">{entry.location}</p>
                       </div>
 
                       <div>
-                        <span className="font-medium text-gray-700 dark:text-gray-300">GPS:</span>
+                        <span className="font-medium text-gray-700 dark:text-gray-300">{noteUiCopy.gpsLabel}:</span>
                         <span className="text-gray-600 dark:text-gray-400 text-xs ml-1 font-mono">
                           {entry.coordinates}
                         </span>
                       </div>
 
                       <div>
-                        <span className="font-medium text-gray-700 dark:text-gray-300">Habitat:</span>
+                        <span className="font-medium text-gray-700 dark:text-gray-300">{noteUiCopy.habitatLabel}:</span>
                         <span className="text-gray-600 dark:text-gray-400 text-xs ml-1">{entry.habitat}</span>
                       </div>
 
                       <div className="bg-amber-100/50 dark:bg-amber-900/30 rounded p-2 mt-2">
-                        <span className="font-medium text-amber-800 dark:text-amber-300">Observation Notes:</span>
+                        <span className="font-medium text-amber-800 dark:text-amber-300">{noteUiCopy.observationLabel}:</span>
                         <p className="text-gray-700 dark:text-gray-300 text-xs mt-1 leading-relaxed italic">
                           "{entry.observation}"
                         </p>
@@ -499,7 +612,7 @@ export default function ExtensionLinker({
 
                       <div className="flex items-center gap-4 pt-2 border-t border-amber-200 dark:border-amber-800">
                         <span className="text-xs">
-                          <span className="font-medium">Quantity:</span> {entry.quantity}
+                          <span className="font-medium">{noteUiCopy.quantityLabel}:</span> {entry.quantity}
                         </span>
                       </div>
                     </div>
@@ -510,45 +623,9 @@ export default function ExtensionLinker({
           ))}
         </div>
 
-        {/* Event Reference Table */}
-        <Card className="mb-6 bg-white/80 border-gray-200 dark:bg-slate-800/50 dark:border-slate-700 backdrop-blur">
-          <CardHeader>
-            <CardTitle className="text-gray-900 dark:text-white flex items-center gap-2">
-              <BookOpen className="w-5 h-5" />
-              {t('ext.eventRef')}
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <Alert className="mb-4 bg-blue-50 border-blue-200 dark:bg-blue-500/10 dark:border-blue-500/30">
-              <Lightbulb className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-              <AlertDescription className="text-blue-800 dark:text-blue-300">
-                {t('ext.eventRefHint')}
-              </AlertDescription>
-            </Alert>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm border-collapse">
-                <thead>
-                  <tr className="border-b-2 border-gray-300 dark:border-slate-600">
-                    <th className="text-left p-2 font-semibold text-gray-900 dark:text-white">eventID</th>
-                    <th className="text-left p-2 font-semibold text-gray-900 dark:text-white">eventDate</th>
-                    <th className="text-left p-2 font-semibold text-gray-900 dark:text-white">Locality</th>
-                    <th className="text-left p-2 font-semibold text-gray-900 dark:text-white">Recorder</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {eventReference.map((row, idx) => (
-                    <tr key={idx} className="border-b border-gray-200 dark:border-slate-700">
-                      <td className="p-2 font-mono text-purple-600 dark:text-purple-400">{row.eventID}</td>
-                      <td className="p-2 text-gray-700 dark:text-slate-300">{row.eventDate}</td>
-                      <td className="p-2 text-gray-700 dark:text-slate-300">{row.locality}</td>
-                      <td className="p-2 text-gray-700 dark:text-slate-300">{row.recorder}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </CardContent>
-        </Card>
+        <div className="mb-6 rounded-lg border border-amber-300 bg-amber-100/70 px-4 py-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-900/30 dark:text-amber-200">
+          <span className="font-semibold">DBH</span> — {noteUiCopy.dbhExplanation}
+        </div>
 
         {/* Occurrence Extension (editable) */}
         <Card className="mb-6 bg-white/80 border-gray-200 dark:bg-slate-800/50 dark:border-slate-700 backdrop-blur">
@@ -584,7 +661,7 @@ export default function ExtensionLinker({
                           <SelectTrigger
                             className={`w-full ${!row.eventID ? "border-red-400 dark:border-red-500" : "border-gray-300 dark:border-slate-600"} bg-white dark:bg-slate-700 text-gray-900 dark:text-white`}
                           >
-                            <SelectValue placeholder="Select eventID" />
+                            <SelectValue placeholder={noteUiCopy.selectEventId} />
                           </SelectTrigger>
                           <SelectContent>
                             {eventReference.map((evt) => (
@@ -603,7 +680,7 @@ export default function ExtensionLinker({
                           <SelectTrigger
                             className={`w-full ${!row.scientificName ? "border-red-400 dark:border-red-500" : "border-gray-300 dark:border-slate-600"} bg-white dark:bg-slate-700 text-gray-900 dark:text-white`}
                           >
-                            <SelectValue placeholder="Select species" />
+                            <SelectValue placeholder={noteUiCopy.selectSpecies} />
                           </SelectTrigger>
                           <SelectContent>
                             <SelectItem value="Ailanthus altissima">Ailanthus altissima</SelectItem>
@@ -623,7 +700,7 @@ export default function ExtensionLinker({
                           <SelectTrigger
                             className={`w-full ${!row.recordedBy ? "border-red-400 dark:border-red-500" : "border-gray-300 dark:border-slate-600"} bg-white dark:bg-slate-700 text-gray-900 dark:text-white`}
                           >
-                            <SelectValue placeholder="Select recorder" />
+                            <SelectValue placeholder={noteUiCopy.selectRecorder} />
                           </SelectTrigger>
                           <SelectContent>
                             <SelectItem value="K. Słupecka">K. Słupecka</SelectItem>
@@ -642,7 +719,7 @@ export default function ExtensionLinker({
                           <SelectTrigger
                             className={`w-full ${!row.organismQuantity ? "border-red-400 dark:border-red-500" : "border-gray-300 dark:border-slate-600"} bg-white dark:bg-slate-700 text-gray-900 dark:text-white`}
                           >
-                            <SelectValue placeholder="Quantity" />
+                            <SelectValue placeholder={noteUiCopy.quantityPlaceholder} />
                           </SelectTrigger>
                           <SelectContent>
                             <SelectItem value="1">1</SelectItem>
@@ -664,14 +741,14 @@ export default function ExtensionLinker({
                           <SelectTrigger
                             className={`w-full ${!row.organismQuantityType ? "border-red-400 dark:border-red-500" : "border-gray-300 dark:border-slate-600"} bg-white dark:bg-slate-700 text-gray-900 dark:text-white`}
                           >
-                            <SelectValue placeholder="Type" />
+                            <SelectValue placeholder={noteUiCopy.typePlaceholder} />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="individual">individual</SelectItem>
-                            <SelectItem value="colony">colony</SelectItem>
-                            <SelectItem value="clump">clump</SelectItem>
-                            <SelectItem value="patch">patch</SelectItem>
-                            <SelectItem value="population">population</SelectItem>
+                            <SelectItem value="individual">{noteUiCopy.individualLabel}</SelectItem>
+                            <SelectItem value="colony">{noteUiCopy.colonyLabel}</SelectItem>
+                            <SelectItem value="clump">{noteUiCopy.clumpLabel}</SelectItem>
+                            <SelectItem value="patch">{noteUiCopy.patchLabel}</SelectItem>
+                            <SelectItem value="population">{noteUiCopy.populationLabel}</SelectItem>
                           </SelectContent>
                         </Select>
                       </td>
@@ -692,7 +769,7 @@ export default function ExtensionLinker({
               ) : (
                 <XCircle className="w-5 h-5 text-red-500" />
               )}
-              Validation Status
+              {noteUiCopy.validationTitle}
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">

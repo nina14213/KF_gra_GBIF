@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Target, Check, X, Link as LinkIcon, MousePointerClick } from 'lucide-react';
+import { Target, Check, Link as LinkIcon, MousePointerClick } from 'lucide-react';
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -11,7 +11,6 @@ interface DropZoneProps {
     termName: string;
     mappedColumn: string | null;
     isRequired: boolean;
-    isValid: boolean;
     onDrop?: (termName: string, columnName: string) => void;
     onRemove?: (termName: string) => void;
     onTapAssign?: (termName: string) => void;
@@ -23,7 +22,6 @@ export default function DropZone({
     termName,
     mappedColumn,
     isRequired,
-    isValid,
     onDrop,
     onRemove,
     onTapAssign,
@@ -32,6 +30,12 @@ export default function DropZone({
 }: DropZoneProps) {
     const [isOver, setIsOver] = useState(false);
     const { t, language } = useLanguage();
+    const pick = (pl: string, en: string, fr: string, de: string) => {
+        if (language === 'en') return en;
+        if (language === 'fr') return fr;
+        if (language === 'de') return de;
+        return pl;
+    };
     const term = dwcTerms[termName];
     const categoryInfo = termCategories[category];
 
@@ -57,17 +61,31 @@ export default function DropZone({
         }
     };
 
+    const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+        if ((event.key === 'Enter' || event.key === ' ') && hasSelectedColumn && !mappedColumn) {
+            event.preventDefault();
+            onTapAssign?.(termName);
+        }
+    };
+
     const getBorderStyle = () => {
-        if (isOver) return 'border-indigo-500 bg-indigo-900/30 scale-[1.02]';
-        if (hasSelectedColumn && !mappedColumn) return 'border-indigo-400 bg-indigo-900/20 border-dashed animate-pulse cursor-pointer';
-        if (mappedColumn && isValid) return 'border-green-400 bg-green-900/20';
-        if (mappedColumn && !isValid) return 'border-red-400 bg-red-900/20';
-        if (isRequired) return 'border-orange-400 bg-orange-900/10 border-dashed';
-        return 'border-slate-700/50 bg-slate-800/10 border-dashed';
+        if (isOver) return 'border-indigo-500 bg-indigo-100 dark:bg-indigo-900/30 scale-[1.02]';
+        if (hasSelectedColumn && !mappedColumn) return 'border-indigo-400 bg-indigo-100/50 dark:bg-indigo-900/20 border-dashed cursor-pointer';
+        // PL: Po udanym polaczeniu pokazujemy kolor akceptacji zamiast ostrzezenia.
+        // EN: After a successful connection, show acceptance color instead of warning color.
+        if (mappedColumn) return 'border-green-400 bg-green-50 dark:bg-green-900/20';
+        if (isRequired) return 'border-orange-400 bg-orange-50/50 dark:bg-orange-900/10 border-dashed';
+        return 'border-border bg-muted/30 border-dashed';
     };
 
     const termDescription = language === 'de' && term?.descriptionDE ? term.descriptionDE : language === 'fr' && term?.descriptionFR ? term.descriptionFR : language === 'en' && term?.descriptionEN ? term.descriptionEN : term?.description;
     const catName = categoryInfo?.name[language] || categoryInfo?.name['en'] || category;
+    const zoneAriaLabel = pick(
+        `${termName}. ${isRequired ? t('common.required') : 'Opcjonalne'}${mappedColumn ? `, zmapowane do ${mappedColumn}` : ', bez mapowania'}.`,
+        `${termName}. ${isRequired ? t('common.required') : 'Optional'}${mappedColumn ? `, mapped to ${mappedColumn}` : ', not mapped'}.`,
+        `${termName}. ${isRequired ? t('common.required') : 'Optionnel'}${mappedColumn ? `, associé à ${mappedColumn}` : ', non associé'}.`,
+        `${termName}. ${isRequired ? t('common.required') : 'Optional'}${mappedColumn ? `, zugeordnet zu ${mappedColumn}` : ', nicht zugeordnet'}.`
+    );
 
     return (
         <TooltipProvider>
@@ -79,6 +97,10 @@ export default function DropZone({
                 onDragLeave={handleDragLeave}
                 onDrop={handleDrop}
                 onClick={handleClick}
+                onKeyDown={handleKeyDown}
+                role={hasSelectedColumn && !mappedColumn ? "button" : "group"}
+                tabIndex={hasSelectedColumn && !mappedColumn ? 0 : undefined}
+                aria-label={zoneAriaLabel}
                 className={`
                     p-4 rounded-xl border-2 transition-all duration-200
                     min-h-[80px] flex flex-col justify-center
@@ -147,7 +169,7 @@ export default function DropZone({
                         </div>
 
                         {termDescription && (
-                            <p className="text-xs text-slate-400 mt-1 line-clamp-2">
+                            <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
                                 {termDescription}
                             </p>
                         )}
@@ -155,15 +177,10 @@ export default function DropZone({
 
                     <div className="flex items-center gap-1">
                         {hasSelectedColumn && !mappedColumn && (
-                            <MousePointerClick className="w-4 h-4 text-indigo-400 animate-bounce" />
+                            <MousePointerClick className="w-4 h-4 text-indigo-400" aria-hidden="true" />
                         )}
-                        {mappedColumn && !isValid && (
-                            <span className="text-red-500">
-                                <X className="w-4 h-4" />
-                            </span>
-                        )}
-                        {mappedColumn && isValid && (
-                            <span className="text-green-500">
+                        {mappedColumn && (
+                            <span className="text-green-500" aria-hidden="true">
                                 <Check className="w-4 h-4" />
                             </span>
                         )}
@@ -172,13 +189,14 @@ export default function DropZone({
                                 variant="ghost"
                                 size="sm"
                                 onClick={(e) => { e.stopPropagation(); onRemove?.(termName); }}
+                                aria-label={`${t('common.remove')}: ${termName}`}
                                 className="text-xs h-6 px-2"
                             >
                                 {t('common.remove')}
                             </Button>
                         )}
                         {!mappedColumn && !hasSelectedColumn && isRequired && (
-                            <Target className="w-4 h-4 text-orange-400 animate-pulse" />
+                            <Target className="w-4 h-4 text-orange-400" aria-hidden="true" />
                         )}
                     </div>
                 </div>
@@ -191,7 +209,7 @@ export default function DropZone({
                             exit={{ opacity: 0, height: 0 }}
                             className="mt-2 pt-2 border-t border-slate-700"
                         >
-                            <p className="text-xs text-slate-300">
+                            <p className="text-xs text-foreground">
                                 <span className="font-semibold">{t('common.mapping')}:</span> {mappedColumn}
                             </p>
                         </motion.div>

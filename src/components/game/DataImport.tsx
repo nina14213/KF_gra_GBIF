@@ -1,4 +1,5 @@
 import React, { useState, useCallback } from 'react';
+import DataImportTutorial from './DataImportTutorial';
 import { motion } from 'framer-motion';
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -30,9 +31,13 @@ interface DataImportProps {
 
 export default function DataImport({ onBack, onImportComplete }: DataImportProps) {
     const { t } = useLanguage();
+    const [showTutorial, setShowTutorial] = useState(() => {
+        try { return !localStorage.getItem('dwc-import-tutorial-seen'); } catch { return true; }
+    });
     const [file, setFile] = useState<File | null>(null);
     const [fileType, setFileType] = useState<'csv' | 'txt' | 'xlsx' | null>(null);
     const [delimiter, setDelimiter] = useState(',');
+    const [customDelimiter, setCustomDelimiter] = useState('');
     const [decimalSign, setDecimalSign] = useState('.');
     const [preview, setPreview] = useState<{ columns: string[]; rows: any[] } | null>(null);
     const [error, setError] = useState<string | null>(null);
@@ -40,8 +45,79 @@ export default function DataImport({ onBack, onImportComplete }: DataImportProps
 
     const getActualDelimiter = (delim: string): string => {
         if (delim === '\\t') return '\t';
+        if (delim === '__custom__') return customDelimiter || ',';
         return delim;
     };
+
+    // Convert Excel serial date number to ISO 8601 string
+    const excelDateToISO = (serial: number): string => {
+        // Excel epoch: 1900-01-01 (with the famous Lotus 1-2-3 leap year bug)
+        const utcDays = serial - 25569; // days between 1900-01-01 and 1970-01-01 (adjusted)
+        const date = new Date(utcDays * 86400 * 1000);
+        return date.toISOString().split('T')[0];
+    };
+
+    // Try to convert common date formats to ISO 8601
+    const normalizeDate = (value: string): string => {
+        if (!value || value.trim() === '') return value;
+        const trimmed = value.trim();
+
+        // Already ISO format (YYYY-MM-DD)
+        if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
+
+        // Excel serial number (pure number, typically 5 digits for modern dates)
+        const asNum = Number(trimmed);
+        if (!isNaN(asNum) && asNum > 1 && asNum < 200000 && !trimmed.includes('.') && !trimmed.includes('/') && !trimmed.includes('-')) {
+            return excelDateToISO(asNum);
+        }
+
+        // DD-MM-YYYY or DD/MM/YYYY or DD.MM.YYYY
+        const dmy = trimmed.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})$/);
+        if (dmy) {
+            const [, d, m, y] = dmy;
+            return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+        }
+
+        // MM/DD/YYYY (US format — ambiguous, try if month ≤ 12)
+        // We prefer DD-MM-YYYY above, so this is a fallback
+        
+        // YYYY/MM/DD
+        const ymd = trimmed.match(/^(\d{4})[./-](\d{1,2})[./-](\d{1,2})$/);
+        if (ymd) {
+            const [, y, m, d] = ymd;
+            return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+        }
+
+        return trimmed;
+    };
+
+    // Detect date-like columns and convert values
+    const convertDates = useCallback((rows: Record<string, string>[], columns: string[]): Record<string, string>[] => {
+        // Heuristic: column name contains 'date', 'data', 'datum', or sample values look like dates
+        const dateColumns = columns.filter(col => {
+            const lc = col.toLowerCase();
+            if (/date|data|datum|day|dzień|jour/.test(lc)) return true;
+            // Check first few values
+            const samples = rows.slice(0, 5).map(r => r[col]).filter(Boolean);
+            return samples.some(v => {
+                const n = Number(v);
+                return (!isNaN(n) && n > 30000 && n < 100000) || // Excel serial
+                       /^\d{1,2}[./-]\d{1,2}[./-]\d{4}$/.test(v);
+            });
+        });
+
+        if (dateColumns.length === 0) return rows;
+
+        return rows.map(row => {
+            const newRow = { ...row };
+            dateColumns.forEach(col => {
+                if (newRow[col]) {
+                    newRow[col] = normalizeDate(newRow[col]);
+                }
+            });
+            return newRow;
+        });
+    }, []);
 
     const parseTextFile = useCallback((text: string, delim: string): { columns: string[]; rows: any[] } => {
         const actualDelim = getActualDelimiter(delim);
@@ -65,7 +141,7 @@ export default function DataImport({ onBack, onImportComplete }: DataImportProps
         });
         
         return { columns: headers, rows };
-    }, [decimalSign, t]);
+    }, [decimalSign, customDelimiter, t]);
 
     const handleFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
         const selectedFile = e.target.files?.[0];
@@ -93,7 +169,8 @@ export default function DataImport({ onBack, onImportComplete }: DataImportProps
                     return obj;
                 });
 
-                setPreview({ columns: headers, rows: rows.slice(0, 5) });
+                const convertedRows = convertDates(rows, headers);
+                setPreview({ columns: headers, rows: convertedRows.slice(0, 5) });
             } catch (err: any) {
                 setError(err.message || t('import.error.parse'));
             }
@@ -144,10 +221,11 @@ export default function DataImport({ onBack, onImportComplete }: DataImportProps
                     headers.forEach((h, i) => { obj[h] = row[i] != null ? String(row[i]) : ''; });
                     return obj;
                 });
+                allData = convertDates(allData, headers);
             } else {
                 const text = await file.text();
                 const parsed = parseTextFile(text, delimiter);
-                allData = parsed.rows;
+                allData = convertDates(parsed.rows, parsed.columns);
             }
 
             onImportComplete?.(allData, preview.columns, file.name);
@@ -157,6 +235,15 @@ export default function DataImport({ onBack, onImportComplete }: DataImportProps
             setIsLoading(false);
         }
     }, [file, fileType, preview, delimiter, parseTextFile, onImportComplete, t]);
+
+    const dismissTutorial = useCallback(() => {
+        try { localStorage.setItem('dwc-import-tutorial-seen', '1'); } catch {}
+        setShowTutorial(false);
+    }, []);
+
+    if (showTutorial) {
+        return <DataImportTutorial onComplete={dismissTutorial} onSkip={dismissTutorial} />;
+    }
 
     return (
         <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-purple-50 to-pink-50 dark:from-slate-900 dark:via-indigo-950 dark:to-purple-950 p-4 md:p-8">
@@ -240,8 +327,32 @@ export default function DataImport({ onBack, onImportComplete }: DataImportProps
                                                 <SelectItem value="\t">{t('import.sep.tab')}</SelectItem>
                                                 <SelectItem value="|">{t('import.sep.pipe')}</SelectItem>
                                                 <SelectItem value=" ">{t('import.sep.space')}</SelectItem>
+                                                <SelectItem value="__custom__">{t('import.sep.other')}</SelectItem>
                                             </SelectContent>
                                         </Select>
+                                        {delimiter === '__custom__' && (
+                                            <Input
+                                                value={customDelimiter}
+                                                onChange={(e) => {
+                                                    const val = e.target.value;
+                                                    setCustomDelimiter(val);
+                                                    if (val && file && (fileType === 'csv' || fileType === 'txt')) {
+                                                        file.text().then(text => {
+                                                            try {
+                                                                const parsed = parseTextFile(text, '__custom__');
+                                                                setPreview({ columns: parsed.columns, rows: parsed.rows.slice(0, 5) });
+                                                                setError(null);
+                                                            } catch (err: any) {
+                                                                setError(err.message);
+                                                            }
+                                                        });
+                                                    }
+                                                }}
+                                                placeholder={t('import.sep.otherPlaceholder')}
+                                                maxLength={3}
+                                                className="bg-muted/50 border-border text-foreground w-24 mt-1"
+                                            />
+                                        )}
                                     </div>
 
                                     <div className="space-y-2">
